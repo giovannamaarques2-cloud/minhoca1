@@ -1,25 +1,119 @@
 <!DOCTYPE html>
 <html lang="pt-BR">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>minhoca.io</title>
-<link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="style.css">
+<meta charset="UTF-8">
+<title>Minhocas Online</title>
+<style>
+  body { margin:0; background:#111; overflow:hidden; font-family:sans-serif; }
+  canvas { display:block; }
+  #menu { position:fixed; inset:0; display:flex; flex-direction:column; gap:12px;
+          align-items:center; justify-content:center; color:#fff; background:rgba(0,0,0,.7); }
+  #menu input, #menu button { font-size:20px; padding:10px 16px; border-radius:8px; border:0; }
+  #menu button { background:#2ecc71; cursor:pointer; }
+  #rank { position:fixed; top:10px; left:10px; color:#fff; font-size:14px; line-height:1.4; }
+</style>
 </head>
 <body>
-<canvas id="c"></canvas>
-<div id="sc" class="hud hide"><small id="rk"></small><span id="pt">0</span> pontos</div>
-<div id="lb" class="hud hide"></div>
-<button id="bt">Turbo</button>
+<canvas id="tela"></canvas>
+<div id="rank"></div>
 <div id="menu">
-  <h1>minhoca.io</h1>
-  <p id="msg">Coma as bolinhas, cresça e faça os outros baterem em você.</p>
-  <input id="nome" maxlength="12" placeholder="Seu apelido" autocomplete="off">
-  <div id="skins"></div>
+  <h1>🐛 Minhocas Online</h1>
+  <input id="nome" placeholder="Seu nome" maxlength="15">
   <button id="jogar">Jogar</button>
-  <p id="dica">Mouse para guiar. Clique ou espaço para o turbo. No celular, arraste e use o botão Turbo.</p>
+  <p id="msg"></p>
 </div>
-<script src="script.js"></script>
+
+<script>
+  // Se o arquivo foi aberto com duplo clique (file://), aponta para o servidor local
+  const SERVIDOR = location.protocol === 'file:' ? 'http://localhost:3000' : '';
+  document.write('<script src="' + SERVIDOR + '/socket.io/socket.io.js"><\/script>');
+</script>
+<script>
+  const msg = document.getElementById('msg');
+  const botao = document.getElementById('jogar');
+
+  if (typeof io === 'undefined') {
+    msg.textContent = '❌ Não consegui falar com o servidor. Rode "npm start" no terminal e abra http://localhost:3000';
+    throw new Error('Socket.IO não carregou: servidor desligado?');
+  }
+
+  const socket = io(SERVIDOR || undefined); // conecta no servidor
+  botao.disabled = true;
+  botao.textContent = 'Conectando...';
+  socket.on('connect', () => { botao.disabled = false; botao.textContent = 'Jogar'; msg.textContent = ''; });
+  socket.on('connect_error', () => { botao.disabled = true; botao.textContent = 'Conectando...'; msg.textContent = '❌ Servidor não encontrado. Ele está rodando (npm start)?'; });
+  const canvas = document.getElementById('tela');
+  const ctx = canvas.getContext('2d');
+  const MAPA = 3000, RAIO = 8;
+  let estado = { jogadores: [], comidas: [] };
+  let vivo = false;
+
+  function ajustar() { canvas.width = innerWidth; canvas.height = innerHeight; }
+  addEventListener('resize', ajustar); ajustar();
+
+  // botão jogar
+  document.getElementById('jogar').onclick = () => {
+    socket.emit('entrar', document.getElementById('nome').value);
+    document.getElementById('menu').style.display = 'none';
+    vivo = true;
+  };
+
+  // mouse -> ângulo -> servidor
+  addEventListener('mousemove', (e) => {
+    if (!vivo) return;
+    const ang = Math.atan2(e.clientY - canvas.height / 2, e.clientX - canvas.width / 2);
+    socket.emit('angulo', ang);
+  });
+
+  // servidor mandou o estado do jogo
+  socket.on('estado', (e) => { estado = e; });
+
+  socket.on('morreu', (pontos) => {
+    vivo = false;
+    document.getElementById('msg').textContent = 'Você morreu! Pontos: ' + pontos;
+    document.getElementById('menu').style.display = 'flex';
+  });
+
+  function desenhar() {
+    ctx.fillStyle = '#1a1a1a';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    const eu = estado.jogadores.find((j) => j.id === socket.id);
+    // câmera segue a minha cabeça
+    const cam = eu ? eu.corpo[0] : { x: MAPA / 2, y: MAPA / 2 };
+    ctx.save();
+    ctx.translate(canvas.width / 2 - cam.x, canvas.height / 2 - cam.y);
+
+    // borda do mapa
+    ctx.strokeStyle = '#e74c3c'; ctx.lineWidth = 4;
+    ctx.strokeRect(0, 0, MAPA, MAPA);
+
+    // comidas
+    for (const c of estado.comidas) {
+      ctx.fillStyle = `hsl(${c.cor},90%,60%)`;
+      ctx.beginPath(); ctx.arc(c.x, c.y, 6, 0, Math.PI * 2); ctx.fill();
+    }
+
+    // minhocas
+    for (const j of estado.jogadores) {
+      ctx.fillStyle = `hsl(${j.cor},80%,50%)`;
+      for (let i = j.corpo.length - 1; i >= 0; i -= 2) {
+        ctx.beginPath(); ctx.arc(j.corpo[i].x, j.corpo[i].y, RAIO, 0, Math.PI * 2); ctx.fill();
+      }
+      const h = j.corpo[0];
+      ctx.fillStyle = '#fff'; ctx.font = '14px sans-serif'; ctx.textAlign = 'center';
+      ctx.fillText(j.nome, h.x, h.y - 16);
+    }
+    ctx.restore();
+
+    // ranking
+    const top = [...estado.jogadores].sort((a, b) => b.pontos - a.pontos).slice(0, 5);
+    document.getElementById('rank').innerHTML =
+      '<b>Ranking</b><br>' + top.map((j, i) => `${i + 1}. ${j.nome} — ${j.pontos}`).join('<br>');
+
+    requestAnimationFrame(desenhar);
+  }
+  desenhar();
+</script>
 </body>
 </html>

@@ -5,7 +5,7 @@ const { Server } = require('socket.io');
 
 const app = express();
 const server = http.createServer(app);
-const io = new Server(server);
+const io = new Server(server, { cors: { origin: '*' } }); // aceita conexões de qualquer origem
 
 app.use(express.static('public')); // entrega o index.html
 
@@ -112,5 +112,5 @@ setInterval(() => {
   });
 }, 1000 / TICKS);
 
-const PORTA = 3000;
-server.listen(PORTA, () => console.log(`Jogo rodando em http://localhost:${PORTA}`));
+const PORTA = process.env.PORT || 3000;
+server.listen(PORTA, () => console.log(`Jogo rodando na porta ${PORTA}`));
